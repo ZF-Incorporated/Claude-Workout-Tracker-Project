@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Workout" />
+  <title>Workout Tracker</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; background: #0f0f0f; color: #f0f0f0; font-family: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; }
+    input[type=number]::-webkit-inner-spin-button,
+    input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    input[type=number] { -moz-appearance: textfield; }
+    #root { height: 100%; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const PROGRAM = {
+      U1: { label: "Upper 1", tag: "Push", exercises: ["Bench Press", "Incline Bench Press", "Overhead Press", "Lateral Raise", "Diamond Push-ups", "Overhead Cable Triceps Extension"] },
+      U2: { label: "Upper 2", tag: "Pull", exercises: ["Pull-up", "Barbell Row", "Lat Pulldown", "Bayesian Cable Curl", "Preacher Curl", "Reverse Cable Flyes"] },
+      L1: { label: "Lower 1", tag: "Quad/Glute", exercises: ["Squat", "Walking Lunge", "Hip Thrust", "Leg Extension", "Seated Leg Curl", "Calf Raise"] },
+      L2: { label: "Lower 2", tag: "Posterior", exercises: ["Romanian Deadlift", "Bulgarian Split Squat", "Hip Thrust", "Seated Leg Curl", "Leg Extension", "Calf Raise"] },
+    };
+
+    const EXERCISE_CONFIG = {
+      "Bench Press":                      { weightIncrement: 5,   repsTarget: 10 },
+      "Incline Bench Press":              { weightIncrement: 5,   repsTarget: 10 },
+      "Barbell Row":                      { weightIncrement: 5,   repsTarget: 10 },
+      "Squat":                            { weightIncrement: 5,   repsTarget: 10 },
+      "Romanian Deadlift":                { weightIncrement: 5,   repsTarget: 10 },
+      "Hip Thrust":                       { weightIncrement: 5,   repsTarget: 10 },
+      "Bulgarian Split Squat":            { weightIncrement: 5,   repsTarget: 10 },
+      "Overhead Press":                   { weightIncrement: 2.5, repsTarget: 12 },
+      "Lat Pulldown":                     { weightIncrement: 2.5, repsTarget: 12 },
+      "Leg Extension":                    { weightIncrement: 2.5, repsTarget: 12 },
+      "Seated Leg Curl":                  { weightIncrement: 2.5, repsTarget: 12 },
+      "Walking Lunge":                    { weightIncrement: 2.5, repsTarget: 12 },
+      "Lateral Raise":                    { weightIncrement: 2.5, repsTarget: 15 },
+      "Reverse Cable Flyes":              { weightIncrement: 2.5, repsTarget: 15 },
+      "Bayesian Cable Curl":              { weightIncrement: 2.5, repsTarget: 12 },
+      "Preacher Curl":                    { weightIncrement: 2.5, repsTarget: 12 },
+      "Machine Lat Pullover":             { weightIncrement: 2.5, repsTarget: 12 },
+      "Overhead Cable Triceps Extension": { weightIncrement: 2.5, repsTarget: 15 },
+      "Calf Raise":                       { weightIncrement: 5,   repsTarget: 15 },
+      "Pull-up":                          { weightIncrement: 0,   repsTarget: 10, isBwDefault: true },
+      "Diamond Push-ups":                 { weightIncrement: 0,   repsTarget: 15, isBwDefault: true },
+    };
+
+    const SETS = 2;
+    const STORAGE_KEY = "workout_tracker_history_v1";
+    const tagColors = { Push: "#e8a838", Pull: "#4fa3d1", "Quad/Glute": "#7bc47f", Posterior: "#b07fd4" };
+
+    function getTodayKey() { return new Date().toISOString().split("T")[0]; }
+    function getConfig(ex) { return EXERCISE_CONFIG[ex] || { weightIncrement: 5, repsTarget: 10 }; }
+
+    function loadHistory() {
+      try { const r = localStorage.getItem(STORAGE_KEY); return r ? JSON.parse(r) : {}; }
+      catch { return {}; }
+    }
+    function saveHistory(h) {
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(h)); } catch {}
+    }
+
+    function didHitTarget(exData, isBw, ex) {
+      if (!exData) return false;
+      const cfg = getConfig(ex);
+      return exData.sets.every(s => Number(s.reps) >= cfg.repsTarget) &&
+        (isBw || exData.sets.every(s => s.weight !== "" && s.weight != null));
+    }
+
+    function getNextTarget(exData, isBw, ex) {
+      if (!exData || !didHitTarget(exData, isBw, ex)) return null;
+      const cfg = getConfig(ex);
+      if (isBw) { const maxReps = Math.max(...exData.sets.map(s => Number(s.reps))); return { reps: maxReps + 1 }; }
+      const maxWeight = Math.max(...exData.sets.map(s => Number(s.weight || 0)));
+      return { weight: maxWeight + cfg.weightIncrement, reps: cfg.repsTarget };
+    }
+
+    function getMissTip(ex, current, isBw) {
+      const cfg = getConfig(ex);
+      const allRepsFilled = current.sets.every(s => s.reps !== "" && s.reps != null);
+      if (!allRepsFilled) return null;
+      const allHit = current.sets.every(s => Number(s.reps) >= cfg.repsTarget);
+      if (allHit) return null;
+      if (isBw) {
+        const maxReps = Math.max(...current.sets.map(s => Number(s.reps)));
+        return `Aim for ${maxReps + 1} reps next session — build 1 rep at a time until you hit ${cfg.repsTarget}`;
+      }
+      const allWeightFilled = current.sets.every(s => s.weight !== "" && s.weight != null);
+      if (!allWeightFilled) return null;
+      const maxReps = Math.max(...current.sets.map(s => Number(s.reps)));
+      const nextRep = Math.min(maxReps + 1, cfg.repsTarget);
+      const weight = Math.max(...current.sets.map(s => Number(s.weight || 0)));
+      if (nextRep < cfg.repsTarget)
+        return `Keep weight at ${weight}lbs — aim for ${nextRep} reps next session, build to ${cfg.repsTarget} before adding weight`;
+      return `Stay at ${weight}lbs and push for ${cfg.repsTarget} reps — don't add weight until you hit the target`;
+    }
+
+    function getHistoryStatus(ex, data, isBw) {
+      const cfg = getConfig(ex);
+      const hit = didHitTarget(data, isBw, ex);
+      if (hit) return { type: "hit", label: "Target met ✓" };
+      const filledSets = data.sets.filter(s => s.reps !== "" && s.reps != null);
+      if (filledSets.length === 0) return null;
+      const maxReps = Math.max(...filledSets.map(s => Number(s.reps)));
+      if (isBw) return { type: "miss", label: `Missed — aim for ${maxReps + 1} reps next session` };
+      const weightFilled = data.sets.some(s => s.weight !== "" && s.weight != null);
+      if (!weightFilled) return null;
+      const weight = Math.max(...data.sets.map(s => Number(s.weight || 0)));
+      const nextRep = Math.min(maxReps + 1, cfg.repsTarget);
+      return { type: "miss", label: `Missed — aim for ${nextRep} reps @ ${weight}lbs` };
+    }
+
+    function Confetti({ active, onDone }) {
+      const canvasRef = useRef(null);
+      const animRef = useRef(null);
+      useEffect(() => {
+        if (!active) return;
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext("2d");
+        canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+        const colors = ["#e8a838","#7bc47f","#4fa3d1","#f0f0f0","#b07fd4","#ff6b6b"];
+        const particles = Array.from({ length: 80 }, () => ({
+          x: Math.random()*canvas.width, y: -10-Math.random()*100,
+          w: 6+Math.random()*8, h: 4+Math.random()*6,
+          color: colors[Math.floor(Math.random()*colors.length)],
+          vx: (Math.random()-0.5)*4, vy: 3+Math.random()*4,
+          rot: Math.random()*Math.PI*2, vrot: (Math.random()-0.5)*0.2, opacity: 1,
+        }));
+        let frame = 0;
+        function draw() {
+          ctx.clearRect(0,0,canvas.width,canvas.height);
+          particles.forEach(p => {
+            p.x+=p.vx; p.y+=p.vy; p.vy+=0.1; p.rot+=p.vrot;
+            if (frame>40) p.opacity = Math.max(0, p.opacity-0.015);
+            ctx.save(); ctx.globalAlpha=p.opacity;
+            ctx.translate(p.x,p.y); ctx.rotate(p.rot);
+            ctx.fillStyle=p.color; ctx.fillRect(-p.w/2,-p.h/2,p.w,p.h);
+            ctx.restore();
+          });
+          frame++;
+          if (frame<90) animRef.current = requestAnimationFrame(draw);
+          else { ctx.clearRect(0,0,canvas.width,canvas.height); onDone(); }
+        }
+        animRef.current = requestAnimationFrame(draw);
+        return () => cancelAnimationFrame(animRef.current);
+      }, [active]);
+      if (!active) return null;
+      return <canvas ref={canvasRef} style={{ position:"fixed",top:0,left:0,width:"100vw",height:"100vh",pointerEvents:"none",zIndex:9999 }} />;
+    }
+
+    function Toast({ msg, onDone }) {
+      useEffect(() => { const t = setTimeout(onDone, 2800); return () => clearTimeout(t); }, []);
+      return (
+        <div style={{ position:"fixed",top:24,left:"50%",transform:"translateX(-50%)",background:"#1a2a1a",border:"1px solid #7bc47f",borderRadius:12,padding:"12px 20px",zIndex:10000,display:"flex",alignItems:"center",gap:10,boxShadow:"0 4px 24px #0008",maxWidth:"90vw" }}>
+          <span style={{ fontSize:20 }}>🏆</span>
+          <span style={{ color:"#7bc47f",fontWeight:600,fontSize:14 }}>{msg}</span>
+        </div>
+      );
+    }
+
+    function App() {
+      const [history, setHistory] = useState(() => loadHistory());
+      const [activeDay, setActiveDay] = useState(null);
+      const [session, setSession] = useState({});
+      const [bwToggles, setBwToggles] = useState({});
+      const [view, setView] = useState("home");
+      const [confirmDelete, setConfirmDelete] = useState(null);
+      const [confetti, setConfetti] = useState(false);
+      const [toast, setToast] = useState(null);
+      const celebratedRef = useRef(new Set());
+
+      function persistHistory(h) { setHistory(h); saveHistory(h); }
+
+      function startWorkout(dayKey) {
+        const initial = {}, initialBw = {};
+        PROGRAM[dayKey].exercises.forEach(ex => {
+          initial[ex] = { sets: Array.from({ length: SETS }, () => ({ weight: "", reps: "" })) };
+          initialBw[ex] = getConfig(ex).isBwDefault || false;
+        });
+        setSession(initial); setBwToggles(initialBw);
+        setActiveDay(dayKey); celebratedRef.current = new Set(); setView("workout");
+      }
+
+      function toggleBw(ex) {
+        setBwToggles(prev => ({ ...prev, [ex]: !prev[ex] }));
+        setSession(prev => { const u={...prev}; u[ex]={...u[ex],sets:u[ex].sets.map(s=>({...s,weight:""}))}; return u; });
+      }
+
+      function checkCelebration(ex, current, isBw) {
+        if (celebratedRef.current.has(ex)) return;
+        const cfg = getConfig(ex);
+        const allRepsFilled = current.sets.every(s => s.reps !== "" && s.reps != null);
+        const allHit = current.sets.every(s => Number(s.reps) >= cfg.repsTarget);
+        const allWeightFilled = isBw || current.sets.every(s => s.weight !== "" && s.weight != null);
+        if (allRepsFilled && allHit && allWeightFilled) {
+          celebratedRef.current.add(ex);
+          setConfetti(true); setToast(`${ex} — target hit! 🎯`);
+        }
+      }
+
+      function handleSetChange(ex, idx, field, value) {
+        setSession(prev => {
+          const u = {...prev};
+          u[ex] = {...u[ex], sets: u[ex].sets.map((s,i) => i===idx ? {...s,[field]:value} : s)};
+          setTimeout(() => checkCelebration(ex, u[ex], bwToggles[ex]), 50);
+          return u;
+        });
+      }
+
+      function finishWorkout() {
+        const entry = { day: activeDay, date: getTodayKey(), exercises: session, bw: bwToggles };
+        const newHistory = { ...history, [getTodayKey()+"_"+activeDay]: entry };
+        persistHistory(newHistory);
+        setView("home"); setActiveDay(null); setSession({}); setBwToggles({});
+        celebratedRef.current = new Set();
+      }
+
+      function deleteEntry(key) {
+        const h = {...history}; delete h[key]; persistHistory(h); setConfirmDelete(null);
+      }
+
+      function getLastSession(dayKey) {
+        return Object.values(history).filter(e=>e.day===dayKey).sort((a,b)=>b.date.localeCompare(a.date))[0] || null;
+      }
+
+      function allHistoryEntries() {
+        return Object.entries(history).sort(([,a],[,b])=>b.date.localeCompare(a.date));
+      }
+
+      function getLiveCue(ex, current, lastEx, isBw) {
+        const cfg = getConfig(ex);
+        if (!current.sets.every(s=>s.reps!==""&&s.reps!=null)) return null;
+        if (!current.sets.every(s=>Number(s.reps)>=cfg.repsTarget)) return null;
+        if (isBw) {
+          const lt = lastEx ? lastEx.sets.reduce((s,r)=>s+Number(r.reps||0),0) : 0;
+          const ct = current.sets.reduce((s,r)=>s+Number(r.reps||0),0);
+          return ct>lt ? {type:"up",msg:"↑ Reps increased — great progression"} : {type:"hit",msg:"Target hit! 🎯"};
+        }
+        if (!current.sets.every(s=>s.weight!==""&&s.weight!=null)) return null;
+        const cw = Math.max(...current.sets.map(s=>Number(s.weight)));
+        const lw = lastEx ? Math.max(...lastEx.sets.map(s=>Number(s.weight||0))) : 0;
+        return cw>lw ? {type:"up",msg:"↑ Weight increased — nice progression"} : {type:"hit",msg:"Target hit! 🎯"};
+      }
+
+      const s = { // shared styles
+        card: { background:"#161616", border:"1px solid #222", borderRadius:12, padding:"16px 20px" },
+        input: { background:"#0f0f0f", border:"1px solid #2a2a2a", borderRadius:8, padding:"8px 10px", color:"#f0f0f0", fontSize:16, textAlign:"center", width:70, WebkitAppearance:"none" },
+      };
+
+      return (
+        <div style={{ minHeight:"100vh", background:"#0f0f0f", color:"#f0f0f0", paddingBottom:40 }}>
+          <Confetti active={confetti} onDone={()=>setConfetti(false)} />
+          {toast && <Toast msg={toast} onDone={()=>setToast(null)} />}
+
+          {/* Header */}
+          <div style={{ borderBottom:"1px solid #222", padding:"16px 20px", display:"flex", alignItems:"center", justifyContent:"space-between", position:"sticky", top:0, background:"#0f0f0f", zIndex:100 }}>
+            <span style={{ fontWeight:700, fontSize:18, letterSpacing:"-0.5px" }}>
+              {view==="workout"&&activeDay ? `${PROGRAM[activeDay].label} · ${PROGRAM[activeDay].tag}` : "Workout Tracker"}
+            </span>
+            <div style={{ display:"flex", gap:8 }}>
+              {view!=="home" && (
+                <button onClick={()=>{ setView("home"); setActiveDay(null); setSession({}); setBwToggles({}); setConfirmDelete(null); }}
+                  style={{ background:"none", border:"1px solid #333", color:"#aaa", padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:14 }}>
+                  ← Back
+                </button>
+              )}
+              {view==="home" && (
+                <button onClick={()=>setView("history")}
+                  style={{ background:"none", border:"1px solid #333", color:"#aaa", padding:"8px 16px", borderRadius:8, cursor:"pointer", fontSize:14 }}>
+                  History
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Home */}
+          {view==="home" && (
+            <div style={{ padding:"24px 20px", maxWidth:480, margin:"0 auto" }}>
+              <p style={{ color:"#666", fontSize:13, marginBottom:24 }}>2 sets · double progression</p>
+              <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+                {Object.entries(PROGRAM).map(([key, day]) => {
+                  const last = getLastSession(key);
+                  return (
+                    <button key={key} onClick={()=>startWorkout(key)}
+                      style={{ ...s.card, textAlign:"left", cursor:"pointer", color:"#f0f0f0", width:"100%", border:"1px solid #252525" }}>
+                      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
+                        <span style={{ fontWeight:700, fontSize:17 }}>{day.label}</span>
+                        <span style={{ fontSize:11, fontWeight:600, padding:"3px 10px", borderRadius:20, background:tagColors[day.tag]+"22", color:tagColors[day.tag] }}>{day.tag}</span>
+                      </div>
+                      <div style={{ color:"#555", fontSize:12, lineHeight:1.6 }}>{day.exercises.join(" · ")}</div>
+                      {last && <div style={{ color:"#444", fontSize:11, marginTop:8 }}>Last: {last.date}</div>}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Workout */}
+          {view==="workout" && activeDay && (
+            <div style={{ padding:"20px", maxWidth:480, margin:"0 auto" }}>
+              {PROGRAM[activeDay].exercises.map(ex => {
+                const cfg = getConfig(ex);
+                const last = getLastSession(activeDay);
+                const lastEx = last?.exercises?.[ex];
+                const lastBw = last?.bw?.[ex] || false;
+                const current = session[ex];
+                const isBw = bwToggles[ex];
+                const liveCue = getLiveCue(ex, current, lastEx, isBw);
+                const nextTarget = getNextTarget(lastEx, lastBw, ex);
+                const missTip = getMissTip(ex, current, isBw);
+
+                return (
+                  <div key={ex} style={{ ...s.card, marginBottom:16 }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom: nextTarget ? 6 : 12 }}>
+                      <div>
+                        <div style={{ fontWeight:600, fontSize:15 }}>{ex}</div>
+                        <div style={{ color:"#444", fontSize:11, marginTop:2 }}>target {cfg.repsTarget} reps</div>
+                      </div>
+                      <div style={{ display:"flex", alignItems:"center", gap:8, flexShrink:0, marginLeft:8 }}>
+                        {lastEx && (
+                          <span style={{ fontSize:10, color:"#555", textAlign:"right" }}>
+                            Last:<br/>{lastEx.sets.map(s=>lastBw?`×${s.reps}`:`${s.weight}×${s.reps}`).join(", ")}
+                          </span>
+                        )}
+                        <button onClick={()=>toggleBw(ex)}
+                          style={{ fontSize:10, padding:"4px 8px", borderRadius:20, border:"1px solid", cursor:"pointer", flexShrink:0,
+                            borderColor:isBw?"#4fa3d1":"#333", background:isBw?"#4fa3d122":"transparent", color:isBw?"#4fa3d1":"#555" }}>
+                          BW
+                        </button>
+                      </div>
+                    </div>
+
+                    {nextTarget && (
+                      <div style={{ marginBottom:12, padding:"7px 10px", background:"#1a1f1a", borderRadius:8, border:"1px solid #2a3a2a" }}>
+                        <span style={{ fontSize:12, color:"#7bc47f" }}>
+                          🎯 {nextTarget.weight ? `${SETS}×${nextTarget.reps} @ ${nextTarget.weight}lbs (+${cfg.weightIncrement}lbs)` : `${SETS}×${nextTarget.reps} reps`}
+                        </span>
+                      </div>
+                    )}
+
+                    <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                      {current.sets.map((set, idx) => {
+                        const lastSet = lastEx?.sets?.[idx];
+                        return (
+                          <div key={idx} style={{ display:"flex", alignItems:"center", gap:8 }}>
+                            <span style={{ color:"#444", fontSize:12, width:44, flexShrink:0 }}>Set {idx+1}</span>
+                            {!isBw && (
+                              <>
+                                <input type="number" inputMode="decimal" placeholder={lastSet?.weight||"lbs"} value={set.weight}
+                                  onChange={e=>handleSetChange(ex,idx,"weight",e.target.value)}
+                                  style={{ ...s.input }} />
+                                <span style={{ color:"#333", fontSize:13 }}>×</span>
+                              </>
+                            )}
+                            <input type="number" inputMode="numeric" placeholder={lastSet?.reps||"reps"} value={set.reps}
+                              onChange={e=>handleSetChange(ex,idx,"reps",e.target.value)}
+                              style={{ ...s.input, width: isBw ? 110 : 70 }} />
+                            <span style={{ color:"#444", fontSize:11 }}>reps</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {(liveCue||missTip) && (
+                      <div style={{ marginTop:12, paddingTop:10, borderTop:"1px solid #1e1e1e" }}>
+                        {liveCue && <span style={{ fontSize:12, color:liveCue.type==="up"?"#7bc47f":"#e8a838" }}>{liveCue.msg}</span>}
+                        {missTip && !liveCue && <span style={{ fontSize:12, color:"#c8a040" }}>💡 {missTip}</span>}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              <button onClick={finishWorkout}
+                style={{ width:"100%", background:"#f0f0f0", color:"#0f0f0f", border:"none", borderRadius:12, padding:"18px", fontWeight:700, fontSize:16, cursor:"pointer", marginTop:8 }}>
+                Finish Workout
+              </button>
+            </div>
+          )}
+
+          {/* History */}
+          {view==="history" && (
+            <div style={{ padding:"24px 20px", maxWidth:480, margin:"0 auto" }}>
+              {allHistoryEntries().length===0 ? (
+                <p style={{ color:"#555", fontSize:14 }}>No sessions logged yet.</p>
+              ) : (
+                <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+                  {allHistoryEntries().map(([key, entry]) => (
+                    <div key={key} style={{ ...s.card }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                        <div>
+                          <span style={{ fontWeight:700, fontSize:15 }}>{PROGRAM[entry.day]?.label}</span>
+                          <span style={{ color:"#555", fontSize:12, marginLeft:10 }}>{entry.date}</span>
+                        </div>
+                        {confirmDelete===key ? (
+                          <div style={{ display:"flex", gap:6 }}>
+                            <button onClick={()=>deleteEntry(key)}
+                              style={{ fontSize:12, padding:"5px 12px", borderRadius:8, background:"#5c1a1a", border:"1px solid #8b2020", color:"#ff6b6b", cursor:"pointer" }}>
+                              Delete
+                            </button>
+                            <button onClick={()=>setConfirmDelete(null)}
+                              style={{ fontSize:12, padding:"5px 12px", borderRadius:8, background:"transparent", border:"1px solid #333", color:"#777", cursor:"pointer" }}>
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <button onClick={()=>setConfirmDelete(key)}
+                            style={{ fontSize:13, padding:"5px 10px", borderRadius:8, background:"transparent", border:"1px solid #2a2a2a", color:"#555", cursor:"pointer" }}>
+                            ✕
+                          </button>
+                        )}
+                      </div>
+                      <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                        {Object.entries(entry.exercises).map(([ex, data]) => {
+                          const wasBw = entry.bw?.[ex];
+                          const status = getHistoryStatus(ex, data, wasBw);
+                          return (
+                            <div key={ex} style={{ borderBottom:"1px solid #1a1a1a", paddingBottom:6 }}>
+                              <div style={{ display:"flex", justifyContent:"space-between", fontSize:12 }}>
+                                <span style={{ color:"#777" }}>{ex}{wasBw?" (BW)":""}</span>
+                                <span style={{ color:"#555" }}>
+                                  {data.sets.map(s=>wasBw?(s.reps?`×${s.reps}`:"—"):(s.weight&&s.reps?`${s.weight}×${s.reps}`:"—")).join(", ")}
+                                </span>
+                              </div>
+                              {status && (
+                                <div style={{ fontSize:11, marginTop:3, color:status.type==="hit"?"#7bc47f":"#c8a040" }}>
+                                  {status.label}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.render(<App />, document.getElementById("root"));
+  </script>
+</body>
+</html>
