@@ -1,8 +1,22 @@
 const Database = require("better-sqlite3");
 const path = require("path");
+const fs = require("fs");
 
-// SQLite file lives right next to this script — persists across restarts.
-const db = new Database(path.join(__dirname, "workout.db"));
+// On Azure App Service, only /home survives restarts and redeploys — the
+// deployment folder (where this script lives) gets replaced on every push.
+// Locally, /home doesn't exist, so fall back to a local ./data folder instead.
+const dataDir = process.env.WEBSITE_SITE_NAME
+  ? "/home/data"
+  : path.join(__dirname, "data");
+
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
+
+const dbPath = path.join(dataDir, "workout.db");
+console.log(`Using database at: ${dbPath}`);
+
+const db = new Database(dbPath);
 
 db.pragma("journal_mode = WAL");
 
