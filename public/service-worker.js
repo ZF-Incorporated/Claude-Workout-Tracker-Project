@@ -1,20 +1,35 @@
 // Bump this on any deploy that changes cached files, so old clients pick up the update.
-const CACHE_NAME = "workout-tracker-shell-v1";
+const CACHE_NAME = "workout-tracker-shell-v2";
 
 const SHELL_ASSETS = [
   "/",
   "/manifest.json",
   "/icons/icon-192.png",
   "/icons/icon-512.png",
-  "/icons/apple-touch-icon.png",
+  "/icons/apple-touch-icon-120.png",
+  "/icons/apple-touch-icon-152.png",
+  "/icons/apple-touch-icon-167.png",
+  "/icons/apple-touch-icon-180.png",
 ];
 
-// Cache the app shell so the UI itself loads with no signal — this is what
-// makes "Add to Home Screen" actually open instantly at the gym instead of
-// showing a browser error.
+// Cache the app shell so the UI itself loads with no signal. We cache each
+// asset independently (not cache.addAll, which is all-or-nothing) — if one
+// asset fails (e.g. briefly blocked by an auth redirect), the rest still
+// get cached instead of the whole install silently failing.
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL_ASSETS))
+    caches.open(CACHE_NAME).then((cache) =>
+      Promise.all(
+        SHELL_ASSETS.map((url) =>
+          fetch(url, { cache: "reload" })
+            .then((res) => {
+              if (res.ok) return cache.put(url, res);
+              console.warn(`Skipped caching ${url} — got status ${res.status}`);
+            })
+            .catch((err) => console.warn(`Skipped caching ${url} —`, err))
+        )
+      )
+    )
   );
   self.skipWaiting();
 });
@@ -41,8 +56,10 @@ self.addEventListener("fetch", (event) => {
 
   // App shell: cache-first, falling back to network, and re-caching
   // whatever the network returns so the shell stays fresh over time.
+  // ignoreSearch handles iOS sometimes appending query params when
+  // launching a standalone home-screen app.
   event.respondWith(
-    caches.match(event.request).then((cached) => {
+    caches.match(event.request, { ignoreSearch: true }).then((cached) => {
       if (cached) return cached;
       return fetch(event.request)
         .then((res) => {
@@ -50,7 +67,7 @@ self.addEventListener("fetch", (event) => {
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, resClone));
           return res;
         })
-        .catch(() => caches.match("/")); // offline + not cached → show shell anyway
+        .catch(() => caches.match("/", { ignoreSearch: true })); // offline + not cached → show shell anyway
     })
   );
 });
