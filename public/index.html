@@ -6,6 +6,10 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Workout" />
+  <meta name="theme-color" content="#0f0f0f" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
   <title>Workout Tracker</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
@@ -21,6 +25,18 @@
 </head>
 <body>
   <div id="root"></div>
+  <script>
+    // Register the service worker so the app shell loads even with no
+    // signal — this is the piece that makes "installed on home screen"
+    // actually work reliably at the gym instead of erroring out.
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("/service-worker.js").catch((err) => {
+          console.warn("Service worker registration failed:", err);
+        });
+      });
+    }
+  </script>
   <script type="text/babel">
     const { useState, useEffect, useRef } = React;
 
@@ -66,13 +82,24 @@
 
     // History now lives in the array-keyed-by-id shape the API returns.
     // We convert it to the same { [id]: entry } map the UI already expects.
+    const OFFLINE_CACHE_KEY = "workout_offline_history_cache";
+
     async function fetchHistory() {
       const res = await fetch(`${API_BASE}/api/history`);
       if (!res.ok) throw new Error("Failed to load history");
       const list = await res.json();
       const map = {};
       list.forEach((entry) => { map[entry.id] = entry; });
+      // Cache the last successful fetch so we have something to show offline.
+      try { localStorage.setItem(OFFLINE_CACHE_KEY, JSON.stringify(map)); } catch {}
       return map;
+    }
+
+    function getOfflineCache() {
+      try {
+        const raw = localStorage.getItem(OFFLINE_CACHE_KEY);
+        return raw ? JSON.parse(raw) : null;
+      } catch { return null; }
     }
 
     async function saveSession(id, entry) {
@@ -204,7 +231,20 @@
       useEffect(() => {
         fetchHistory()
           .then((h) => setHistory(h))
-          .catch((e) => setLoadError(e.message))
+          .catch((e) => {
+            // Network failure (offline) — fall back to the last cached
+            // load instead of a dead error screen.
+            const isNetworkError = !navigator.onLine || e.message === "Failed to fetch";
+            if (isNetworkError) {
+              const cached = getOfflineCache();
+              if (cached) {
+                setHistory(cached);
+                setToast("Offline — showing your last synced data");
+                return;
+              }
+            }
+            setLoadError(e.message);
+          })
           .finally(() => setLoading(false));
       }, []);
 
