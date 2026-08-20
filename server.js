@@ -16,6 +16,8 @@ app.use("/api/history", historyRoutes);
 
 app.get("/api/health", (req, res) => res.json({ status: "ok" }));
 
+app.get("/api/debug-headers", (req, res) => res.json(req.headers));
+
 app.listen(PORT, () => {
   console.log(`Workout tracker API running on http://localhost:${PORT}`);
 });
