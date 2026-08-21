@@ -43,7 +43,6 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_logs_session ON exercise_logs(session_id);
   CREATE INDEX IF NOT EXISTS idx_sessions_day ON sessions(day);
-  CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,          -- Entra ID x-ms-client-principal-id
@@ -64,6 +63,11 @@ if (!hasUserId) {
   console.log("Migrating: adding user_id column to sessions table");
   db.exec("ALTER TABLE sessions ADD COLUMN user_id TEXT");
 }
+
+// Only safe to create this index once user_id is guaranteed to exist —
+// on a fresh install it's already there; on an existing db, the migration
+// above just added it.
+db.exec("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)");
 
 // Creates a profile on first login, refreshes name/email + last_login_at on
 // every subsequent one. Called once per request by the auth middleware in
