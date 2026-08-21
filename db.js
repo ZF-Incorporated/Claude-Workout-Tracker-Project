@@ -25,6 +25,7 @@ db.pragma("journal_mode = WAL");
 db.exec(`
   CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,          -- e.g. "2026-07-02_U1"
+    user_id TEXT,                 -- Entra ID x-ms-client-principal-id, scopes data per user
     day TEXT NOT NULL,            -- U1 | U2 | L1 | L2
     date TEXT NOT NULL,           -- YYYY-MM-DD
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -42,6 +43,41 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_logs_session ON exercise_logs(session_id);
   CREATE INDEX IF NOT EXISTS idx_sessions_day ON sessions(day);
+  CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+
+  CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,          -- Entra ID x-ms-client-principal-id
+    email TEXT,
+    display_name TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_login_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `);
+
+// Migration: if this db was created before user_id existed, the CREATE TABLE
+// above was a no-op (table already existed) — so add the column by hand.
+// Enforced as required at the application layer (routes/history.js) instead
+// of a DB-level NOT NULL, since existing rows have no value to backfill.
+const sessionColumns = db.prepare("PRAGMA table_info(sessions)").all();
+const hasUserId = sessionColumns.some((col) => col.name === "user_id");
+if (!hasUserId) {
+  console.log("Migrating: adding user_id column to sessions table");
+  db.exec("ALTER TABLE sessions ADD COLUMN user_id TEXT");
+}
+
+// Creates a profile on first login, refreshes name/email + last_login_at on
+// every subsequent one. Called once per request by the auth middleware in
+// server.js — cheap upsert, no separate "sign up" step needed.
+const upsertUserStmt = db.prepare(`
+  INSERT INTO users (id, email, display_name, created_at, last_login_at)
+  VALUES (?, ?, ?, datetime('now'), datetime('now'))
+  ON CONFLICT(id) DO UPDATE SET
+    email = excluded.email,
+    display_name = excluded.display_name,
+    last_login_at = datetime('now')
+`);
+
+db.upsertUser = (id, email, displayName) =>
+  upsertUserStmt.run(id, email, displayName);
 
 module.exports = db;
